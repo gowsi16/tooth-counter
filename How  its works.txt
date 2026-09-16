@@ -1,0 +1,63 @@
+Here is a detailed explanation of how the Gear Tooth Counter works, broken down by the technologies used, the external user experience, and the internal computer vision pipeline.
+
+### Technologies Used
+
+This project relies on a lightweight stack designed to be simple, fast, and dependency-free on the frontend.
+
+**1. Backend (Python):**
+*   **Flask:** A lightweight web framework used to handle HTTP requests, serve the frontend, accept video uploads, and provide the API endpoints.
+*   **OpenCV (`opencv-python-headless`):** The core computer vision library used for all image processing, frame extraction, Hough transforms, and polar unwarping.
+*   **NumPy:** Used for heavy numerical operations, array manipulations (since images in OpenCV are NumPy arrays), and performing the Fast Fourier Transform (FFT).
+
+**2. Frontend (Web):**
+*   **HTML/CSS/Vanilla JavaScript:** The frontend is entirely standard web tech with no build step, no React/Vue, and no external CSS frameworks. It uses modern features like `fetch`, async/await, and CSS Grid/Flexbox for a responsive and clean design. 
+
+---
+
+### How it Works Externally (The User Experience)
+
+From the user's perspective, the workflow is designed to be seamless:
+
+1.  **Upload:** The user opens the web page and drags & drops (or selects) a video file (MP4, MOV, etc.) containing the gears.
+2.  **Preview:** The frontend instantly uploads the video to the backend and displays a native video player so the user can verify they uploaded the correct clip.
+3.  **Analysis Trigger:** The user clicks the **"Analyze video"** button (which can be clicked at any specific timestamp in the video preview).
+4.  **Processing:** A loading spinner appears while the backend crunches the data. The frontend sends the specific timestamp the user was paused at.
+5.  **Results Display:** A few seconds later, the UI updates with:
+    *   Three large "cards" showing the final tooth count for each gear.
+    *   A confidence score (e.g., "95% of 40 samples agreed").
+    *   An annotated snapshot image showing exactly what the algorithm "saw," with green rings, red center hubs, and numbered yellow tick marks for every tooth detected.
+
+---
+
+### How it Works Internally (The Computer Vision Pipeline)
+
+The backend doesn't use AI or a trained neural network like YOLO (though it could be swapped in later). Instead, it relies on classical, deterministic computer vision techniques. When the `/api/analyze` endpoint is called, the video goes through a 5-step pipeline in `gear_counter.py`:
+
+#### Step 1: Frame Sampling
+Analyzing a 60 FPS video frame-by-frame is unnecessary and slow because the gears barely move between consecutive frames. 
+*   **The trick:** The pipeline purposefully drops most of the video. It samples only about **2 frames per second**, capped at a maximum of 40 frames total. If you start analyzing at 15 seconds, it samples 40 frames from the 15-second mark onward. 
+*   This turns a 2-minute processing job into a 3-second job while giving us completely independent "looks" at the gears.
+
+#### Step 2: Locating the Assembly (Housing)
+To avoid false positives from the background, the algorithm first looks for the large circular housing that holds the planetary gears.
+*   It converts the frame to grayscale, applies a blur, and runs a **Hough Circle Transform**.
+*   This gives the algorithm a Region of Interest (ROI) to crop, discarding the rest of the image.
+
+#### Step 3: Locating the Gears
+Inside that cropped ROI, the algorithm looks for the three specific gears.
+*   Instead of looking for the jagged, toothed outer edges (which touch each other and are hard to distinguish), it looks for the **hub** (the small, perfect circle bearing-hole in the center of each gear).
+*   It runs a second Hough Circle Transform tuned specifically for tiny circles.
+*   It filters out stray detections (like a bolt head) by ensuring the detected hubs fall within a specific "orbit radius" from the center of the housing.
+
+#### Step 4: Counting the Teeth (The Clever Part)
+Counting jagged teeth on a circular object is notoriously error-prone due to lighting, reflections, and motion blur. 
+*   **Unrolling (Polar Warp):** The algorithm takes an annulus (a ring shape) around the gear's center that brackets the teeth. Using `cv2.warpPolar`, it "unrolls" this circular ring into a flat, rectangular strip. What used to be a circle is now a straight line.
+*   **1D Signal:** It averages this strip vertically to collapse it into a single 1D wave/signal. Every physical tooth creates one peak (a bright spot) in this wave.
+*   **Fast Fourier Transform (FFT):** Instead of trying to count the individual peaks (which fails if a shadow hides one tooth), it feeds the wave into an FFT algorithm. The FFT finds the **dominant frequency** of the wave. If a gear has 16 teeth, the wave will oscillate 16 times, and the FFT will loudly report "16" as the strongest frequency.
+*   **Visualization:** It reverses this FFT to find the exact angles of those peaks and draws the yellow tick marks and red numbers back onto the image.
+
+#### Step 5: Stabilization (The Voting System)
+A single frame might misread a gear (guessing 15 or 17 instead of 16) due to motion blur or a hand crossing the camera. 
+*   Because we sampled 40 frames in Step 1, we get 40 independent guesses for each gear. 
+*   The algorithm simply takes the **Mode** (the most frequently occurring number) across all samples. 
+*   Even if 10 frames give wrong answers, the 30 frames that give the correct answer will easily win the vote. The ratio of winning votes (e.g., 30/40) is returned as the **Confidence Percentage** to the user.

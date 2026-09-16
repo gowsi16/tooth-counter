@@ -1,0 +1,25 @@
+VIDEO
+  ↓
+Find big circular housing
+  ↓
+Find small circular gear hubs
+  ↓
+Get center of each gear
+  ↓
+Take ring around gear teeth
+  ↓
+Unwrap circular ring → straight strip
+  ↓
+Convert strip → 1D signal
+  ↓
+FFT
+  ↓
+Find dominant frequency
+  ↓
+Number of teeth
+  ↓
+Repeat for many frames
+  ↓
+Majority vote
+  ↓
+FINAL TOOTH COUNT
